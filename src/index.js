@@ -36,7 +36,7 @@
       this._setupRouteChangeListener();
     
       // If autoTranslate is enabled and a target language is set, translate immediately.
-      if (this.config.autoTranslate && this.config.targetLanguage && this.config.targetLanguage !== this.config.sourceLanguage) {
+      if (this.config.autoTranslate && this.config.targetLanguage) {
         this.translatePage(this.config.targetLanguage);
       }
 
@@ -127,8 +127,8 @@
       });
 
       if (contentToTranslate.length === 0) return;  // All content already translated.
-
       
+      console.log("Translating")
 
       // Send request to the API.
       this._sendTranslationRequest(contentToTranslate, (translations) => {
