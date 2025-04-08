@@ -22,6 +22,8 @@
     },
     _translationRetries: 0,
     _languageSelectorButton: null,
+    _mutationTimeout: null,
+    _observer: null,
     _languageMapping: {
       en: 'Original',
       hi: 'हिन्दी (Hindi)',
@@ -52,7 +54,7 @@
       console.log("[Cache] Saving cache to localStorage:", cache);
       localStorage.setItem(this._cacheKey, JSON.stringify(cache));
     },
-    // Use SparkMD5 for a stable MD5 hash.
+    // Compute a stable MD5 hash with SparkMD5.
     _computeHash: function(str) {
       const computedHash = SparkMD5.hash(str);
       console.log("[Hash] Computed hash using SparkMD5:", computedHash);
@@ -60,14 +62,16 @@
     },
     /* -------------------------------------------- */
 
-    // --- Step 2 & 3: Extract content, compute stable id, set as element id, and build context ---
+    // --- Step 2 & 3: Extract content, compute stable id, and build context ---
     extractContent: function() {
       console.log("[Extract] Extracting content using selectors.");
       const includeSelector = this.config.selectors.include.join(',');
       const elements = Array.from(document.querySelectorAll(includeSelector));
       const excludeSelector = this.config.selectors.exclude.join(',');
       const excluded = excludeSelector ? Array.from(document.querySelectorAll(excludeSelector)) : [];
-      const filtered = elements.filter(el => !excluded.some(ex => ex.contains(el) || el.contains(ex)));
+      const filtered = elements.filter(el =>
+        !excluded.some(ex => ex.contains(el) || el.contains(ex))
+      );
       console.log("[Extract] Found", filtered.length, "elements after filtering.");
 
       const extracted = filtered.map(el => {
@@ -122,7 +126,7 @@
       return extracted;
     },
 
-    // --- Step 4: Save original content mapping (id -> {text, type, context}) in localStorage ---
+    // --- Step 4: Save original mapping (id -> {text, type, context}) in localStorage ---
     _saveOriginalContent: function() {
       console.log("[Original] Saving original content...");
       const content = this.extractContent();
@@ -138,7 +142,7 @@
       console.log("[Original] Original content saved:", mapping);
     },
 
-    // --- Helper: Retrieve original content as array ---
+    // --- Helper: Retrieve original content mapping as an array ---
     _getOriginalContent: function() {
       console.log("[Original] Retrieving original content mapping.");
       const stored = localStorage.getItem(this._originalContentKey);
@@ -202,14 +206,13 @@
         console.log("[Translate] Updated language selector to:", name);
       }
 
-      // --- Step 10: If target is source, restore original content ---
+      // If target is the source language, restore original content.
       if (targetLanguage === this.config.sourceLanguage) {
         console.log("[Translate] Target language is source. Restoring original content.");
         this._restoreOriginalContent();
         return;
       }
 
-      // --- Step 6: Get original content items ---
       const originalItems = this._getOriginalContent();
       if (originalItems.length === 0 && this._translationRetries < 3) {
         this._translationRetries++;
@@ -220,7 +223,7 @@
       this._translationRetries = 0;
       this._showLoadingIndicator();
 
-      // --- Step 7 & 8: Fetch translations from cache or via API ---
+      // Fetch translations for these original items.
       this._sendTranslationRequest(originalItems, (translations) => {
         console.log("[Translate] Received translations:", translations);
         this._applyTranslations(translations);
@@ -228,7 +231,7 @@
       });
     },
 
-    // --- Step 7 & 8: Send API request for missing translations and update cache ---
+    // --- Step 7 & 8: Send API request for missing translations; update cache ---
     _sendTranslationRequest: function(contentItems, callback) {
       console.log("[API] Starting translation request for", contentItems.length, "items.");
       const cache = this._getCache();
@@ -305,7 +308,7 @@
       });
     },
 
-    // --- Step 8: Apply translations to the corresponding elements ---
+    // --- Step 8: Apply translations to elements ---
     _applyTranslations: function(translations) {
       console.log("[Apply] Applying translations to elements.");
       translations.forEach(translation => {
@@ -352,31 +355,52 @@
       if (indicator) indicator.remove();
     },
 
-    // --- Route Change Listener for SPAs ---
-    _setupRouteChangeListener: function() {
-      console.log("[Route] Setting up route change listener.");
-      const _pushState = history.pushState;
-      history.pushState = function() {
-        _pushState.apply(history, arguments);
-        console.log("[Route] pushState called; dispatching 'locationchange'.");
-        window.dispatchEvent(new Event('locationchange'));
-      };
-      const _replaceState = history.replaceState;
-      history.replaceState = function() {
-        _replaceState.apply(history, arguments);
-        console.log("[Route] replaceState called; dispatching 'locationchange'.");
-        window.dispatchEvent(new Event('locationchange'));
-      };
-      window.addEventListener('popstate', function() {
-        console.log("[Route] popstate detected; dispatching 'locationchange'.");
-        window.dispatchEvent(new Event('locationchange'));
+    // --- Step 11: Mutation Observer to handle dynamic DOM changes ---
+    _setupMutationObserver: function() {
+      console.log("[Observer] Setting up MutationObserver for DOM changes.");
+      const observer = new MutationObserver(mutations => {
+        console.log("[Observer] Mutation detected:", mutations);
+        // Debounce updates; wait 300ms after last change
+        if (this._mutationTimeout) {
+          clearTimeout(this._mutationTimeout);
+        }
+        this._mutationTimeout = setTimeout(() => {
+          this._handleMutations();
+        }, 300);
       });
-      window.addEventListener('locationchange', () => {
-        console.log("[Route] 'locationchange' event detected; re-triggering translation.");
-        setTimeout(() => {
-          TranslationSDK.translatePage(TranslationSDK.config.targetLanguage);
-        }, 500);
-      });
+      observer.observe(document.body, { childList: true, subtree: true });
+      this._observer = observer;
+      console.log("[Observer] MutationObserver set.");
+    },
+
+    _handleMutations: function() {
+      console.log("[Observer] Processing DOM mutations.");
+      const allItems = this.extractContent();
+      const stored = localStorage.getItem(this._originalContentKey);
+      const mapping = stored ? JSON.parse(stored) : {};
+      const newItems = allItems.filter(item => !(item.id in mapping));
+      if (newItems.length > 0) {
+        console.log("[Observer] Found", newItems.length, "new dynamic content items.");
+        newItems.forEach(item => {
+          mapping[item.id] = {
+            text: item.text,
+            type: item.type,
+            context: item.context
+          };
+        });
+        localStorage.setItem(this._originalContentKey, JSON.stringify(mapping));
+        console.log("[Observer] Updated original mapping with new items:", mapping);
+        // If target language is active (and not source) translate new items.
+        if (this.config.targetLanguage &&
+            this.config.targetLanguage !== this.config.sourceLanguage) {
+          this._sendTranslationRequest(newItems, (translations) => {
+            console.log("[Observer] Received translations for new items:", translations);
+            this._applyTranslations(translations);
+          });
+        }
+      } else {
+        console.log("[Observer] No new items found.");
+      }
     },
 
     // --- UI: Language Selector ---
@@ -480,9 +504,10 @@
         this._saveOriginalContent();
       }, 50);
 
-      // Set up UI components and route change listener.
+      // Set up UI components, route change listener, and mutation observer.
       this._addLanguageSelector();
       this._setupRouteChangeListener();
+      this._setupMutationObserver();
 
       const storedLanguage = localStorage.getItem('translation_language');
       console.log("[Init] Stored language:", storedLanguage);
