@@ -99,6 +99,7 @@
 
     // Translates the page's textual content.
     translatePage: function(targetLanguage) {
+      console.log(targetLanguage)
       // Save the target language.
       this.config.targetLanguage = targetLanguage;
       localStorage.setItem('translation_language', targetLanguage);
