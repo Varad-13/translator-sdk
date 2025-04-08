@@ -120,6 +120,7 @@
 
       // Try retrieving cached translations.
       const cachedTranslations = this._getCachedTranslations(content, targetLanguage);
+      console.log(cachedTranslations)
       if (cachedTranslations && cachedTranslations.length > 0) {
         this._applyTranslations(cachedTranslations);
       }
