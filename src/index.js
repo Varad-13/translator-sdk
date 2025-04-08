@@ -6,12 +6,11 @@
 
   /**
    * Helper function to update only the text nodes of an element.
-   * If there is exactly one text node (the common case for simple content),
-   * it updates that node in place. Otherwise, it falls back to replacing
-   * the element’s content entirely.
+   * It finds text nodes in an element and replaces their text content,
+   * preserving the overall element structure.
    *
    * @param {Element} element - The DOM element to update.
-   * @param {string} newText - The translated text that will replace the original.
+   * @param {string} newText - The translated text to apply.
    */
   function updateTextNodes(element, newText) {
     const textNodes = [];
@@ -32,14 +31,11 @@
       textNodes.push(currentNode);
     }
     if (textNodes.length === 0) {
-      // If no text nodes exist, append a new text node.
       element.appendChild(document.createTextNode(newText));
     } else if (textNodes.length === 1) {
-      // If there is a single text node, update its value.
       textNodes[0].nodeValue = newText;
     } else {
-      // If there are multiple text nodes, merging them to match the translated text
-      // is nontrivial; so, as a fallback, replace the element’s content altogether.
+      // When multiple text nodes exist, clear element content and replace with one new text node.
       element.innerHTML = '';
       element.appendChild(document.createTextNode(newText));
     }
@@ -78,7 +74,6 @@
       if (this.config.autoTranslate && this.config.targetLanguage) {
         this.translatePage(this.config.targetLanguage);
       }
-
       return this;
     },
 
@@ -95,7 +90,7 @@
         return !excludedElements.some(excluded => excluded.contains(el) || el.contains(excluded));
       });
 
-      // Extract content with context; assign an id to elements if none exists.
+      // Extract content along with context; assign an id if none exists.
       return filteredElements.map(el => {
         if (!el.id) {
           el.id = `el-${Math.random().toString(36).substr(2, 9)}`;
@@ -122,7 +117,7 @@
       }).filter(item => item.text.length > 0);
     },
 
-    // Determine element type based on its tag.
+    // Determine element type based on tag.
     _getElementType: function(el) {
       const tag = el.tagName.toLowerCase();
       if (['h1', 'h2', 'h3', 'h4', 'h5', 'h6'].includes(tag)) return 'heading';
@@ -134,16 +129,15 @@
       return 'other';
     },
 
-    // Translate the page into the target language.
+    // Translate the page into the target language, one element at a time.
     translatePage: function(targetLanguage) {
-      // Set target language and save the preference.
+      // Set target language and store preference.
       this.config.targetLanguage = targetLanguage;
       localStorage.setItem('translation_language', targetLanguage);
 
-      // Extract content from the page.
       const content = this.extractContent();
 
-      // If target language equals the source language, restore the original content.
+      // If target language equals the source language, restore original content.
       if (targetLanguage === this.config.sourceLanguage) {
         content.forEach(item => {
           const element = document.getElementById(item.id);
@@ -154,48 +148,44 @@
         return;
       }
 
-      // Try to retrieve cached translations.
-      const cachedTranslations = this._getCachedTranslations(content, targetLanguage);
-      if (cachedTranslations && cachedTranslations.length > 0) {
-        this._applyTranslations(cachedTranslations);
-      }
-
-      // Identify content that isn’t cached.
-      const contentToTranslate = content.filter(item => {
-        if (!cachedTranslations) return true;
-        return !cachedTranslations.some(cached => cached.id === item.id);
-      });
-
-      if (contentToTranslate.length === 0) {
-        return; // All content already has cached translations.
-      }
-
-      // Show a loading indicator.
+      // Show a global loading indicator.
       this._showLoadingIndicator();
 
-      // Send the content needing translation to the API.
-      this._sendTranslationRequest(contentToTranslate, (translations) => {
-        // Apply the new translations.
-        this._applyTranslations(translations);
-        // Cache the newly received translations.
-        this._cacheTranslations(translations, targetLanguage);
-        // Hide the loading indicator.
-        this._hideLoadingIndicator();
+      // Process each element individually.
+      content.forEach(item => {
+        const cached = this._getCachedTranslation(item, targetLanguage);
+        if (cached) {
+          this._applyTranslation(cached);
+        } else {
+          this._sendTranslationRequestForElement(item, (translation) => {
+            this._applyTranslation(translation);
+            this._cacheTranslation(item, translation, targetLanguage);
+          });
+        }
       });
+
+      // Hide the loading indicator after a delay.
+      setTimeout(() => { this._hideLoadingIndicator(); }, 5000);
     },
 
-    // Sends a translation request to the backend API.
-    _sendTranslationRequest: function(content, callback) {
+    /**
+     * Sends a translation request for a single element.
+     * The payload is constructed with one content item.
+     *
+     * @param {Object} item - Object representing the element and its text.
+     * @param {Function} callback - Function to execute upon receiving the translation.
+     */
+    _sendTranslationRequestForElement: function(item, callback) {
       const payload = {
         sourceLanguage: this.config.sourceLanguage,
         targetLanguage: this.config.targetLanguage,
         siteId: this.config.siteId,
-        content: content.map(item => ({
+        content: [{
           id: item.id,
           text: item.text,
           type: item.type,
           context: item.context
-        }))
+        }]
       };
 
       fetch(this.config.apiUrl, {
@@ -217,51 +207,50 @@
           console.error('Translation error:', data.error);
           return;
         }
-        callback(data.translations);
+        // Assume API returns an array; we take the first translation.
+        if (data.translations && data.translations.length > 0) {
+          callback(data.translations[0]);
+        }
       })
       .catch(error => {
         console.error("Translation request failed:", error);
-        this._hideLoadingIndicator();
       });
     },
 
-    // Apply translations to the DOM.
-    _applyTranslations: function(translations) {
-      translations.forEach(translation => {
-        const element = document.getElementById(translation.id);
-        if (!element) return;
-        // Save the original HTML if it hasn't been saved yet.
-        if (!element.dataset.originalHTML) {
-          element.dataset.originalHTML = element.innerHTML;
-        }
-        // Update only the text nodes (this preserves the element structure)
-        updateTextNodes(element, translation.translated);
-      });
+    /**
+     * Apply a single translation to the corresponding element.
+     * Saves the original HTML (if not already saved) and then updates only text nodes.
+     *
+     * @param {Object} translation - Object with { id, translated }.
+     */
+    _applyTranslation: function(translation) {
+      const element = document.getElementById(translation.id);
+      if (!element) return;
+      if (!element.dataset.originalHTML) {
+        element.dataset.originalHTML = element.innerHTML;
+      }
+      updateTextNodes(element, translation.translated);
     },
 
-    // Retrieve cached translations from localStorage (if available and not expired).
-    _getCachedTranslations: function(content, targetLanguage) {
-      const cacheKey = `translations_${this.config.siteId}_${this.config.sourceLanguage}_${targetLanguage}`;
+    /**
+     * Retrieves a cached translation for a single element from localStorage.
+     *
+     * @param {Object} item - The element content object.
+     * @param {string} targetLanguage - The language code.
+     * @returns {Object|null} - The cached translation (with id and translated) or null.
+     */
+    _getCachedTranslation: function(item, targetLanguage) {
+      const cacheKey = `translation_${this.config.siteId}_${item.id}_${this.config.sourceLanguage}_${targetLanguage}`;
       const cached = localStorage.getItem(cacheKey);
       if (!cached) return null;
       try {
         const cache = JSON.parse(cached);
         const now = new Date().getTime();
-        // Cache expires after 24 hours.
-        if (now - cache.timestamp > 24 * 60 * 60 * 1000) {
+        if (now - cache.timestamp > 24 * 60 * 60 * 1000) { // cache expires after 24 hours
           localStorage.removeItem(cacheKey);
           return null;
         }
-        // Return translations matching current content.
-        return content.map(item => {
-          const cachedItem = cache.data.find(c => c.original === item.text);
-          if (!cachedItem) return null;
-          return {
-            id: item.id,
-            original: item.text,
-            translated: cachedItem.translated
-          };
-        }).filter(Boolean);
+        return { id: item.id, original: item.text, translated: cache.translated };
       } catch (e) {
         console.error('Cache parsing error:', e);
         localStorage.removeItem(cacheKey);
@@ -269,28 +258,18 @@
       }
     },
 
-    // Cache new translations in localStorage.
-    _cacheTranslations: function(translations, targetLanguage) {
-      const cacheKey = `translations_${this.config.siteId}_${this.config.sourceLanguage}_${targetLanguage}`;
+    /**
+     * Caches a single translation for an element in localStorage.
+     *
+     * @param {Object} item - The element content object.
+     * @param {Object} translation - The translation data returned by the API.
+     * @param {string} targetLanguage - The target language code.
+     */
+    _cacheTranslation: function(item, translation, targetLanguage) {
+      const cacheKey = `translation_${this.config.siteId}_${item.id}_${this.config.sourceLanguage}_${targetLanguage}`;
+      const cacheData = { translated: translation.translated, timestamp: new Date().getTime() };
       try {
-        const existing = localStorage.getItem(cacheKey);
-        const cache = existing ? JSON.parse(existing) : { data: [], timestamp: new Date().getTime() };
-        translations.forEach(translation => {
-          const existingIndex = cache.data.findIndex(c => c.original === translation.original);
-          if (existingIndex >= 0) {
-            cache.data[existingIndex] = {
-              original: translation.original,
-              translated: translation.translated
-            };
-          } else {
-            cache.data.push({
-              original: translation.original,
-              translated: translation.translated
-            });
-          }
-        });
-        cache.timestamp = new Date().getTime();
-        localStorage.setItem(cacheKey, JSON.stringify(cache));
+        localStorage.setItem(cacheKey, JSON.stringify(cacheData));
       } catch (e) {
         console.error('Cache saving error:', e);
       }
@@ -328,7 +307,7 @@
       dropdown.style.padding = '5px 0';
       dropdown.style.borderTop = '1px solid #ddd';
 
-      // Added Original option using the sourceLanguage from config.
+      // Include the Original option plus additional languages.
       const languages = [
         { code: this.config.sourceLanguage, name: 'Original' },
         { code: 'hi', name: 'हिन्दी (Hindi)' },
@@ -354,7 +333,6 @@
         option.style.fontSize = '14px';
         option.style.fontFamily = 'system-ui, sans-serif';
 
-        // Highlight the saved language option if it exists.
         if (savedLanguage === lang.code) {
           option.style.backgroundColor = '#f0f0f0';
           button.innerHTML = `<span>🌐</span> <span>${lang.name}</span>`;
