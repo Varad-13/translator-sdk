@@ -42,7 +42,6 @@
     _cacheKey: "translationSDK_cache",
 
     /* ------------------ Helper Cache Functions ------------------ */
-    // Retrieve the current cache as an object.
     _getCache: function() {
       console.log("[Cache] Retrieving cache from localStorage");
       const stored = localStorage.getItem(this._cacheKey);
@@ -55,7 +54,6 @@
         return {};
       }
     },
-    // Save the provided cache object back to localStorage.
     _setCache: function(cache) {
       console.log("[Cache] Saving cache to localStorage:", cache);
       localStorage.setItem(this._cacheKey, JSON.stringify(cache));
@@ -99,21 +97,23 @@
         return;
       }
       const mapping = JSON.parse(stored);
-      Object.keys(mapping).forEach(id => {
-        const el = document.getElementById(id);
-        if (el) {
-          console.log(`[Restore] Restoring element ${id} to original text.`);
-          el.textContent = mapping[id];
+      // Loop through all elements that have a translation key.
+      const elements = document.querySelectorAll("[data-translation-key]");
+      elements.forEach(el => {
+        const key = el.getAttribute("data-translation-key");
+        if (mapping[key]) {
+          console.log(`[Restore] Restoring element with key ${key}`);
+          el.textContent = mapping[key];
           // Remove any class starting with "translated-"
           Array.from(el.classList).forEach(cls => {
             if (cls.indexOf("translated-") === 0) {
               el.classList.remove(cls);
-              console.log(`[Restore] Removed class ${cls} from element ${id}.`);
+              console.log(`[Restore] Removed class ${cls} from element with key ${key}`);
             }
           });
         }
       });
-      console.log("[Restore] Finished restoring all original content.");
+      console.log("[Restore] Finished restoring original content.");
     },
 
     // Initializes the SDK with provided options.
@@ -168,10 +168,14 @@
       console.log("[Extract] Found", filteredElements.length, "elements after filtering.");
 
       const extracted = filteredElements.map(el => {
-        if (!el.id) {
-          el.id = `el-${Math.random().toString(36).substr(2, 9)}`;
-          console.log("[Extract] Assigned new ID to element:", el.id);
-        }
+        const text = el.textContent.trim();
+        if (!text.length) return null;
+        // Compute hash from the element's text.
+        const key = this._computeHash(text);
+        // Instead of using a random ID, assign the computed hash as a data attribute.
+        el.setAttribute("data-translation-key", key);
+        // Optionally, you can also set el.id = key if you know texts are unique,
+        // but here we rely on the data attribute for selection.
         const sectionEl = el.closest('section, article, div.section');
         const sectionTitle = sectionEl
           ? (sectionEl.querySelector('h1, h2, h3')?.textContent.trim() || "")
@@ -181,8 +185,8 @@
         const precedingEl = index > 0 ? siblings[index - 1] : null;
         const followingEl = index < siblings.length - 1 ? siblings[index + 1] : null;
         return {
-          id: el.id,
-          text: el.textContent.trim(),
+          id: key, // Use the hash as the unique key.
+          text: text,
           type: this._getElementType(el),
           element: el,
           context: {
@@ -191,7 +195,7 @@
             sectionTitle: sectionTitle
           }
         };
-      }).filter(item => item.text.length > 0);
+      }).filter(item => item !== null);
       console.log("[Extract] Extracted", extracted.length, "content items.");
       return extracted;
     },
@@ -266,10 +270,10 @@
         const hash = this._computeHash(originalText);
         const cacheKey = hash + "-" + this.config.targetLanguage;
         if (cache[cacheKey]) {
-          console.log(`[API] Found cached translation for item ${item.id} with key ${cacheKey}`);
+          console.log(`[API] Found cached translation for item with key ${item.id} using cache key ${cacheKey}`);
           cachedResponses.push({ id: item.id, translated: cache[cacheKey] });
         } else {
-          console.log(`[API] No cache found for item ${item.id} with key ${cacheKey}. Will request translation.`);
+          console.log(`[API] No cache found for item with key ${item.id} using cache key ${cacheKey}. Will request translation.`);
           item.hash = hash;
           contentToRequest.push(item);
         }
@@ -286,7 +290,7 @@
         targetLanguage: this.config.targetLanguage,
         siteId: this.config.siteId,
         content: contentToRequest.map(item => ({
-          id: item.id,
+          id: item.id, // This is the hash key.
           text: item.text,
           type: item.type,
           context: item.context
@@ -320,7 +324,7 @@
           if (originalItem) {
             const key = originalItem.hash + "-" + this.config.targetLanguage;
             cache[key] = translation.translated;
-            console.log(`[API] Caching translation for item ${originalItem.id} with key ${key}:`, translation.translated);
+            console.log(`[API] Caching translation for item with key ${originalItem.id} using cache key ${key}:`, translation.translated);
           }
         });
         this._setCache(cache);
@@ -338,20 +342,21 @@
     _applyTranslations: function(translations) {
       console.log("[Apply] Applying translations to page elements.");
       translations.forEach(translation => {
-        const element = document.getElementById(translation.id);
+        // Find the element using its data-translation-key attribute.
+        const element = document.querySelector('[data-translation-key="' + translation.id + '"]');
         if (!element) {
-          console.warn("[Apply] Element not found for translation id:", translation.id);
+          console.warn("[Apply] Element not found for translation key:", translation.id);
           return;
         }
         element.textContent = translation.translated;
         Array.from(element.classList).forEach(cls => {
           if (cls.indexOf("translated-") === 0) {
             element.classList.remove(cls);
-            console.log(`[Apply] Removed old class ${cls} from element ${translation.id}`);
+            console.log(`[Apply] Removed old class ${cls} from element with key ${translation.id}`);
           }
         });
         element.classList.add(`translated-${this.config.targetLanguage}`);
-        console.log(`[Apply] Applied translation for element ${translation.id}: ${translation.translated}`);
+        console.log(`[Apply] Applied translation for element with key ${translation.id}: ${translation.translated}`);
       });
       console.log("[Apply] Finished applying translations.");
     },
