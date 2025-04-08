@@ -58,7 +58,7 @@
           TranslationSDK.translatePage(TranslationSDK.config.targetLanguage);
         }, 500);
       });
-    }
+    },
 
     /* ---------- Cache Helper Functions ---------- */
     _getCache: function() {
