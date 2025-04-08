@@ -8,7 +8,7 @@
     config: {
       apiUrl: API_URL,
       siteId: null,
-      sourceLanguage: "en", // "Original" text
+      sourceLanguage: "en", // Original language
       targetLanguage: null,
       apiKey: null,
       autoTranslate: true,
@@ -31,9 +31,9 @@
       pa: 'ਪੰਜਾਬੀ (Punjabi)',
       gu: 'ગુજરાતી (Gujarati)'
     },
-    // LocalStorage keys:
-    _originalContentKey: "translationSDK_originalContent",  // mapping: hash -> original text
-    _cacheKey: "translationSDK_cache",                      // mapping: hash-targetLanguage -> translated text
+    // Keys for localStorage mapping:
+    _originalContentKey: "translationSDK_originalContent",  // mapping: hash → original text
+    _cacheKey: "translationSDK_cache",                      // mapping: hash-targetLanguage → translated text
 
     /* ---------- Cache Helper Functions ---------- */
     _getCache: function() {
@@ -43,7 +43,7 @@
         const cache = stored ? JSON.parse(stored) : {};
         console.log("[Cache] Current cache:", cache);
         return cache;
-      } catch (e) {
+      } catch(e) {
         console.error("[Cache] Error parsing cache:", e);
         return {};
       }
@@ -52,7 +52,7 @@
       console.log("[Cache] Saving cache to localStorage:", cache);
       localStorage.setItem(this._cacheKey, JSON.stringify(cache));
     },
-    // Use SparkMD5 to compute a stable hash.
+    // Use SparkMD5 to compute a stable MD5 hash.
     _computeHash: function(str) {
       const computedHash = SparkMD5.hash(str);
       console.log("[Hash] Computed hash using SparkMD5:", computedHash);
@@ -60,7 +60,7 @@
     },
     /* -------------------------------------------- */
 
-    // --- Step 2 & 3: Scrape content and set stable IDs ---
+    // --- Step 2 & 3: Scrape content, compute stable hash, set as element id, and build context ---
     extractContent: function() {
       console.log("[Extract] Extracting content using selectors.");
       const includeSelector = this.config.selectors.include.join(',');
@@ -70,10 +70,10 @@
       const filtered = elements.filter(el => !excluded.some(ex => ex.contains(el) || el.contains(ex)));
       console.log("[Extract] Found", filtered.length, "elements after filtering.");
 
-      // For each element, compute a hash from its original text and assign as its id if not already set.
       const extracted = filtered.map(el => {
         const originalText = el.textContent.trim();
         if (!originalText) return null;
+        // Compute and assign a stable hash only once.
         let key = el.id;
         if (!key || key.length === 0) {
           key = this._computeHash(originalText);
@@ -82,9 +82,24 @@
         } else {
           console.log("[Extract] Using existing id for element:", key);
         }
+        // Build context by checking closest section and immediate siblings.
+        const sectionEl = el.closest('section, article, div.section');
+        const sectionTitle = sectionEl
+          ? (sectionEl.querySelector('h1, h2, h3')?.textContent.trim() || "")
+          : "";
+        const siblings = Array.from(el.parentNode.children);
+        const index = siblings.indexOf(el);
+        const preceding = (index > 0) ? siblings[index - 1].textContent.trim() : "";
+        const following = (index < siblings.length - 1) ? siblings[index + 1].textContent.trim() : "";
         return {
           id: key,
           text: originalText,
+          type: el.tagName.toLowerCase(),
+          context: {
+            preceding: preceding,
+            following: following,
+            sectionTitle: sectionTitle
+          },
           element: el
         };
       }).filter(item => item !== null);
@@ -92,7 +107,7 @@
       return extracted;
     },
 
-    // --- Step 4: Save original text mapping (hash -> original text) ---
+    // --- Step 4: Save original mapping (hash → original text) ---
     _saveOriginalContent: function() {
       console.log("[Original] Saving original content...");
       const content = this.extractContent();
@@ -117,6 +132,7 @@
       for (const key in mapping) {
         const el = document.getElementById(key);
         if (el) {
+          // Also, to build context we can call extractContent() but here we use stored original text.
           items.push({
             id: key,
             text: mapping[key],
@@ -128,12 +144,12 @@
       return items;
     },
 
-    // --- Step 10: Restore original text on request ---
+    // --- Step 10: Restore original content using stored mapping ---
     _restoreOriginalContent: function() {
       console.log("[Restore] Restoring original content...");
       const mappingStr = localStorage.getItem(this._originalContentKey);
       if (!mappingStr) {
-        console.warn("[Restore] No original content found.");
+        console.warn("[Restore] No original content mapping found.");
         return;
       }
       const mapping = JSON.parse(mappingStr);
@@ -141,7 +157,7 @@
         const el = document.getElementById(key);
         if (el) {
           el.textContent = mapping[key];
-          // Remove translation-specific CSS classes.
+          // Remove any translation-specific classes.
           Array.from(el.classList).forEach(cls => {
             if (cls.indexOf("translated-") === 0) {
               el.classList.remove(cls);
@@ -167,7 +183,7 @@
         console.log("[Translate] Updated language selector to:", name);
       }
 
-      // --- Step 10: If target equals source, restore original content ---
+      // --- Step 10: If target equals source, restore original text ---
       if (targetLanguage === this.config.sourceLanguage) {
         console.log("[Translate] Target language is source. Restoring original content.");
         this._restoreOriginalContent();
@@ -185,7 +201,7 @@
       this._translationRetries = 0;
       this._showLoadingIndicator();
 
-      // --- Step 7 & 8: Get translations from cache or via API ---
+      // --- Step 7 & 8: Fetch translations from cache or via API ---
       this._sendTranslationRequest(originalItems, (translations) => {
         console.log("[Translate] Received translations:", translations);
         this._applyTranslations(translations);
@@ -193,7 +209,7 @@
       });
     },
 
-    // --- Step 7 & 8: Send API request for missing translations and update cache ---
+    // --- Step 7 & 8: Send API request if cache missing; update cache on response ---
     _sendTranslationRequest: function(contentItems, callback) {
       console.log("[API] Starting translation request for", contentItems.length, "items.");
       const cache = this._getCache();
@@ -222,8 +238,8 @@
         targetLanguage: this.config.targetLanguage,
         siteId: this.config.siteId,
         content: toRequest.map(item => ({
-          id: item.id,      // Stable key
-          text: item.text,
+          id: item.id,
+          text: item.text, // Note: This is the original (English) text from our mapping
           type: item.type,
           context: item.context
         }))
@@ -292,7 +308,7 @@
       console.log("[Apply] Finished applying translations.");
     },
 
-    // --- UI: Loading indicator ---
+    // --- UI: Loading Indicator ---
     _showLoadingIndicator: function() {
       console.log("[UI] Showing loading indicator.");
       if (document.querySelector('.translation-loading-indicator')) return;
@@ -445,7 +461,7 @@
         this._saveOriginalContent();
       }, 50);
 
-      // Set up UI components and route listener.
+      // Set up UI components and route change listener.
       this._addLanguageSelector();
       this._setupRouteChangeListener();
 
