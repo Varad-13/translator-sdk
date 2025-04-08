@@ -9,7 +9,7 @@
     config: {
       apiUrl: API_URL,
       siteId: null,
-      sourceLanguage: "en",
+      sourceLanguage: "en", // "Original" language.
       targetLanguage: null,
       apiKey: null,
       autoTranslate: true,
@@ -19,8 +19,55 @@
         exclude: ['.no-translate', '[data-no-translate]']
       }
     },
+    // Track retry attempts for content extraction.
+    _translationRetries: 0,
+    // Reference for the language button (for immediate UI updates).
+    _languageSelectorButton: null,
+    // Mapping language codes to friendly names.
+    _languageMapping: {
+      en: 'Original',
+      hi: 'हिन्दी (Hindi)',
+      mr: 'मराठी (Marathi)',
+      ta: 'தமிழ் (Tamil)',
+      kn: 'ಕನ್ನಡ (Kannada)',
+      pa: 'ਪੰਜਾਬੀ (Punjabi)',
+      gu: 'ગુજરાતી (Gujarati)'
+    },
+    // Local storage key for storing the initial content.
+    _originalContentKey: "translationSDK_originalContent",
 
-    // Initializes the SDK with options.
+    // Saves the initial content to localStorage if not already saved.
+    _saveOriginalContent: function() {
+      if (!localStorage.getItem(this._originalContentKey)) {
+        const content = this.extractContent();
+        const mapping = {};
+        content.forEach(item => {
+          mapping[item.id] = item.text;
+        });
+        localStorage.setItem(this._originalContentKey, JSON.stringify(mapping));
+      }
+    },
+
+    // Restores the original content (removes any translation classes).
+    _restoreOriginalContent: function() {
+      const stored = localStorage.getItem(this._originalContentKey);
+      if (!stored) return;
+      const mapping = JSON.parse(stored);
+      Object.keys(mapping).forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+          el.textContent = mapping[id];
+          // Remove any class that starts with "translated-"
+          Array.from(el.classList).forEach(cls => {
+            if (cls.indexOf("translated-") === 0) {
+              el.classList.remove(cls);
+            }
+          });
+        }
+      });
+    },
+
+    // Initializes the SDK with provided options.
     init: function(options) {
       this.config = { ...this.config, ...options };
 
@@ -29,20 +76,24 @@
         return;
       }
 
+      // Save original content once.
+      this._saveOriginalContent();
+
       // Set up the language selector UI.
       this._addLanguageSelector();
-
-      // Set up route change detection so the translation re-runs on URL changes.
+      // Set up route change detection so that translation re-runs on URL changes.
       this._setupRouteChangeListener();
+
       const storedLanguage = localStorage.getItem('translation_language');
-      // If autoTranslate is enabled and a target language is set, translate immediately.
-      if (this.config.autoTranslate) {
-        this.translatePage(storedLanguage || this.config.targetLanguage);
-      } else {
-        if (storedLanguage) {
-          this.translatePage(storedLanguage)
+      // Allow a slight delay for the DOM to settle before initial translation.
+      setTimeout(() => {
+        if (this.config.autoTranslate) {
+          this.translatePage(storedLanguage || this.config.targetLanguage);
+        } else if (storedLanguage) {
+          this.translatePage(storedLanguage);
         }
-      }
+      }, 100);
+
       return this;
     },
 
@@ -56,17 +107,18 @@
 
       // Filter out excluded elements.
       const filteredElements = elements.filter(el =>
-        !excludedElements.some(excluded => excluded.contains(el) || el.contains(excluded))
+        !excludedElements.some(excluded =>
+          excluded.contains(el) || el.contains(excluded)
+        )
       );
 
-      // Ensure each element has an ID and add simple contextual information.
+      // Ensure each element has an ID and add surrounding context if necessary.
       return filteredElements.map(el => {
         if (!el.id) {
           el.id = `el-${Math.random().toString(36).substr(2, 9)}`;
         }
         const sectionEl = el.closest('section, article, div.section');
         const sectionTitle = sectionEl ? (sectionEl.querySelector('h1, h2, h3')?.textContent.trim() || "") : "";
-        // Also include text context from surrounding siblings, if needed.
         const siblings = Array.from(el.parentNode.children);
         const index = siblings.indexOf(el);
         const precedingEl = index > 0 ? siblings[index - 1] : null;
@@ -97,26 +149,35 @@
       return 'other';
     },
 
-    // Translates the page's textual content.
+    // Translates the page's textual content or restores the original.
     translatePage: function(targetLanguage) {
-      console.log(targetLanguage)
-      // Save the target language.
+      // Save the target language and update localStorage.
       this.config.targetLanguage = targetLanguage;
       localStorage.setItem('translation_language', targetLanguage);
 
-      const content = this.extractContent();
+      // Update the language selector button immediately (on translation trigger).
+      if (this._languageSelectorButton) {
+        const languageName = this._languageMapping[targetLanguage] || targetLanguage;
+        this._languageSelectorButton.innerHTML = `<span>🌐</span> <span>${languageName}</span>`;
+      }
 
-      // If target language is the source, restore original content.
+      // If the target language is the source language ("Original"), restore content.
       if (targetLanguage === this.config.sourceLanguage) {
-        console.log("original language restore")
-        content.forEach(item => {
-          const element = document.getElementById(item.id);
-          if (element && element.dataset.originalText) {
-            element.textContent = element.dataset.originalText;
-          }
-        });
+        this._restoreOriginalContent();
         return;
       }
+
+      const content = this.extractContent();
+      if (content.length === 0 && this._translationRetries < 3) {
+        this._translationRetries++;
+        console.warn("No content extracted; retrying in 500ms... Retry count: " + this._translationRetries);
+        setTimeout(() => {
+          this.translatePage(targetLanguage);
+        }, 500);
+        return;
+      }
+      // Reset retry counter when content is found.
+      this._translationRetries = 0;
 
       this._showLoadingIndicator();
 
@@ -168,15 +229,24 @@
       });
     },
 
-    // Applies received translations by replacing text content.
+    // Applies received translations by replacing text content and applying a language-specific CSS class.
     _applyTranslations: function(translations) {
       translations.forEach(translation => {
         const element = document.getElementById(translation.id);
         if (!element) return;
         if (!element.dataset.originalText) {
+          // In case original text wasn't saved earlier (should normally be saved)
           element.dataset.originalText = element.textContent;
         }
         element.textContent = translation.translated;
+        // Remove any previous translation classes (classes starting with "translated-")
+        Array.from(element.classList).forEach(cls => {
+          if (cls.indexOf("translated-") === 0) {
+            element.classList.remove(cls);
+          }
+        });
+        // Add the new translation class specific to the target language.
+        element.classList.add(`translated-${this.config.targetLanguage}`);
       });
     },
 
@@ -198,8 +268,8 @@
       });
       // Listen for the custom 'locationchange' event.
       window.addEventListener('locationchange', () => {
-        // Wait briefly to allow new content to render.
         setTimeout(() => {
+          // Trigger translation on route change using the current target language.
           TranslationSDK.translatePage(TranslationSDK.config.targetLanguage);
         }, 500);
       });
@@ -219,8 +289,12 @@
       container.style.zIndex = '9999';
       container.style.overflow = 'hidden';
   
+      // Create the main button.
       const button = document.createElement('button');
-      button.innerHTML = `<span>🌐</span> <span>Translate</span>`;
+      // Set initial text from the configured target or source language.
+      const initLang = this.config.targetLanguage || this.config.sourceLanguage;
+      const initName = this._languageMapping[initLang] || initLang;
+      button.innerHTML = `<span>🌐</span> <span>${initName}</span>`;
       button.style.background = 'none';
       button.style.border = 'none';
       button.style.padding = '10px 15px';
@@ -231,6 +305,9 @@
       button.style.fontFamily = 'system-ui, sans-serif';
       button.style.fontSize = '14px';
   
+      // Save button reference for later updates when translation is triggered.
+      this._languageSelectorButton = button;
+  
       const dropdown = document.createElement('div');
       dropdown.className = 'translation-language-dropdown';
       dropdown.style.display = 'none';
@@ -238,16 +315,14 @@
       dropdown.style.borderTop = '1px solid #ddd';
   
       const languages = [
-        { code: this.config.sourceLanguage, name: 'Original' },
-        { code: 'hi', name: 'हिन्दी (Hindi)' },
-        { code: 'mr', name: 'मराठी (Marathi)' },
-        { code: 'ta', name: 'தமிழ் (Tamil)' },
-        { code: 'kn', name: 'ಕನ್ನಡ (Kannada)' },
-        { code: 'pa', name: 'ਪੰਜਾਬੀ (Punjabi)' },
-        { code: 'gu', name: 'ગુજરાતી (Gujarati)' }
+        { code: this.config.sourceLanguage, name: this._languageMapping[this.config.sourceLanguage] },
+        { code: 'hi', name: this._languageMapping['hi'] },
+        { code: 'mr', name: this._languageMapping['mr'] },
+        { code: 'ta', name: this._languageMapping['ta'] },
+        { code: 'kn', name: this._languageMapping['kn'] },
+        { code: 'pa', name: this._languageMapping['pa'] },
+        { code: 'gu', name: this._languageMapping['gu'] }
       ];
-  
-      const savedLanguage = localStorage.getItem('translation_language');
   
       languages.forEach(lang => {
         const option = document.createElement('button');
@@ -262,18 +337,12 @@
         option.style.fontSize = '14px';
         option.style.fontFamily = 'system-ui, sans-serif';
   
-        if (savedLanguage === lang.code) {
-          option.style.backgroundColor = '#f0f0f0';
-          button.innerHTML = `<span>🌐</span> <span>${lang.name}</span>`;
-          if (this.config.autoTranslate) {
-            this.config.targetLanguage = lang.code;
-          }
-        }
-  
         option.addEventListener('click', () => {
-          this.translatePage(lang.code);
-          button.innerHTML = `<span>🌐</span> <span>${lang.name}</span>`;
+          // Trigger translation when this option is clicked.
+          TranslationSDK.translatePage(lang.code);
+          // Hide the dropdown.
           dropdown.style.display = 'none';
+          // Clear background on other options and highlight the selected one.
           Array.from(dropdown.children).forEach(child => {
             child.style.backgroundColor = 'transparent';
           });
@@ -285,7 +354,7 @@
   
       button.addEventListener('click', (e) => {
         e.stopPropagation();
-        dropdown.style.display = dropdown.style.display === 'none' ? 'block' : 'none';
+        dropdown.style.display = (dropdown.style.display === 'none') ? 'block' : 'none';
       });
   
       document.addEventListener('click', (e) => {
