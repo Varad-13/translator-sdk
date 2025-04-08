@@ -108,6 +108,7 @@
 
       // If target language is the source, restore original content.
       if (targetLanguage === this.config.sourceLanguage) {
+        console.log("original language restore")
         content.forEach(item => {
           const element = document.getElementById(item.id);
           if (element && element.dataset.originalText) {
@@ -128,7 +129,7 @@
         if (!cachedTranslations) return true;
         return !cachedTranslations.some(cached => cached.id === item.id);
       });
-
+      console.log(contentToTranslate)
       if (contentToTranslate.length === 0) return;  // All content already translated.
 
       this._showLoadingIndicator();
