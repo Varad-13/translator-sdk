@@ -34,7 +34,7 @@
 
       // Set up route change detection so the translation re-runs on URL changes.
       this._setupRouteChangeListener();
-
+    
       // If autoTranslate is enabled and a target language is set, translate immediately.
       if (this.config.autoTranslate && this.config.targetLanguage && this.config.targetLanguage !== this.config.sourceLanguage) {
         this.translatePage(this.config.targetLanguage);
@@ -100,9 +100,9 @@
       // Save the target language.
       this.config.targetLanguage = targetLanguage;
       localStorage.setItem('translation_language', targetLanguage);
-
+      
       const content = this.extractContent();
-
+      this._showLoadingIndicator();
       // If target language is the source, restore original content.
       if (targetLanguage === this.config.sourceLanguage) {
         content.forEach(item => {
@@ -128,7 +128,7 @@
 
       if (contentToTranslate.length === 0) return;  // All content already translated.
 
-      this._showLoadingIndicator();
+      
 
       // Send request to the API.
       this._sendTranslationRequest(contentToTranslate, (translations) => {
