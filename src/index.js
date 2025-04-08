@@ -36,6 +36,29 @@
     // LocalStorage keys:
     _originalContentKey: "translationSDK_originalContent",  // mapping: id -> { text, type, context }
     _cacheKey: "translationSDK_cache",                      // mapping: id-targetLanguage -> translated text
+    
+    _setupRouteChangeListener: function() {
+      console.log("[Route] Setting up route change listener.");
+      const _pushState = history.pushState;
+      history.pushState = function () {
+        _pushState.apply(history, arguments);
+        window.dispatchEvent(new Event("locationchange"));
+      };
+      const _replaceState = history.replaceState;
+      history.replaceState = function () {
+        _replaceState.apply(history, arguments);
+        window.dispatchEvent(new Event("locationchange"));
+      };
+      window.addEventListener("popstate", function () {
+        window.dispatchEvent(new Event("locationchange"));
+      });
+      window.addEventListener("locationchange", () => {
+        console.log("[Route] Route changed. Retrying translation...");
+        setTimeout(() => {
+          TranslationSDK.translatePage(TranslationSDK.config.targetLanguage);
+        }, 500);
+      });
+    }
 
     /* ---------- Cache Helper Functions ---------- */
     _getCache: function() {
