@@ -36,9 +36,10 @@
       this._setupRouteChangeListener();
 
       // If autoTranslate is enabled and a target language is set, translate immediately.
-      if (this.config.autoTranslate && this.config.targetLanguage) {
+      if (this.config.autoTranslate && this.config.targetLanguage && this.config.targetLanguage !== this.config.sourceLanguage) {
         this.translatePage(this.config.targetLanguage);
       }
+
 
       return this;
     },
