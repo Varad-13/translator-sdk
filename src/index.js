@@ -9,7 +9,7 @@
     config: {
       apiUrl: API_URL,
       siteId: null,
-      sourceLanguage: "en", // This is our "Original" language.
+      sourceLanguage: "en", // This is the "Original" language.
       targetLanguage: null,
       apiKey: null,
       autoTranslate: true,
@@ -22,11 +22,11 @@
         exclude: ['.no-translate', '[data-no-translate]']
       }
     },
-    // Counter for retry attempts when content is not yet available.
+    // Retry counter for content extraction.
     _translationRetries: 0,
-    // Reference for the language selector button.
+    // Reference to the language selector button.
     _languageSelectorButton: null,
-    // Mapping of language codes to friendly names.
+    // Mapping language codes to friendly names.
     _languageMapping: {
       en: 'Original',
       hi: 'हिन्दी (Hindi)',
@@ -36,9 +36,9 @@
       pa: 'ਪੰਜਾਬੀ (Punjabi)',
       gu: 'ગુજરાતી (Gujarati)'
     },
-    // Local storage key for the original content.
+    // LocalStorage key for storing the original (untranslated) content.
     _originalContentKey: "translationSDK_originalContent",
-    // Local storage key for the translation cache.
+    // LocalStorage key for the translation cache.
     _cacheKey: "translationSDK_cache",
 
     /* ------------------ Helper Cache Functions ------------------ */
@@ -55,32 +55,29 @@
     _setCache: function(cache) {
       localStorage.setItem(this._cacheKey, JSON.stringify(cache));
     },
-    // Compute a simple hash (djb2) for a given string.
+    // Compute a simple djb2 hash for a given string.
     _computeHash: function(str) {
       let hash = 5381;
       for (let i = 0; i < str.length; i++) {
         hash = ((hash << 5) + hash) + str.charCodeAt(i); // hash * 33 + c
       }
-      // Convert to positive number and return as string.
       return (hash >>> 0).toString(16);
     },
     /* ------------------------------------------------------------ */
 
-    // Save the original (untranslated) content.
+    // Save the original (untranslated) content into localStorage.
     _saveOriginalContent: function() {
+      // If already saved, do not override.
+      if (localStorage.getItem(this._originalContentKey)) return;
       const content = this.extractContent();
       const mapping = {};
       content.forEach(item => {
-        // Save the original text in a dataset property if not already set.
-        if (!item.element.dataset.originalText) {
-          item.element.dataset.originalText = item.text;
-        }
-        mapping[item.id] = item.element.dataset.originalText;
+        mapping[item.id] = item.text;
       });
       localStorage.setItem(this._originalContentKey, JSON.stringify(mapping));
     },
 
-    // Restore the original content (remove translation classes).
+    // Restore the original content using the saved mapping.
     _restoreOriginalContent: function() {
       const stored = localStorage.getItem(this._originalContentKey);
       if (!stored) return;
@@ -89,7 +86,7 @@
         const el = document.getElementById(id);
         if (el) {
           el.textContent = mapping[id];
-          // Remove any translation class (any class starting with "translated-")
+          // Remove any class starting with "translated-"
           Array.from(el.classList).forEach(cls => {
             if (cls.indexOf("translated-") === 0) {
               el.classList.remove(cls);
@@ -108,18 +105,18 @@
         return;
       }
 
-      // Delay saving the original content to ensure page is rendered.
+      // Save the original content (after a short delay to let the page render).
       setTimeout(() => {
         this._saveOriginalContent();
       }, 50);
 
       // Set up the language selector UI.
       this._addLanguageSelector();
-      // Set up route change detection to trigger re-translation on URL changes.
+      // Set up route change detection to re-trigger translation on URL changes.
       this._setupRouteChangeListener();
 
       const storedLanguage = localStorage.getItem('translation_language');
-      // Allow a slight delay for the DOM to settle before the initial translation.
+      // Allow a slight delay for the DOM to settle before initial translation.
       setTimeout(() => {
         if (this.config.autoTranslate) {
           this.translatePage(storedLanguage || this.config.targetLanguage);
@@ -137,7 +134,7 @@
       const elements = Array.from(document.querySelectorAll(includeSelector));
       const excludeSelector = this.config.selectors.exclude.join(',');
       const excludedElements = excludeSelector ? Array.from(document.querySelectorAll(excludeSelector)) : [];
-
+      
       // Filter out excluded elements.
       const filteredElements = elements.filter(el =>
         !excludedElements.some(excluded => excluded.contains(el) || el.contains(excluded))
@@ -181,7 +178,7 @@
       return 'other';
     },
 
-    // Triggers a translation or restores original content if requested.
+    // Triggers translation or restores original text when "Original" is selected.
     translatePage: function(targetLanguage) {
       // Save target language and update localStorage.
       this.config.targetLanguage = targetLanguage;
@@ -193,7 +190,7 @@
         this._languageSelectorButton.innerHTML = `<span>🌐</span> <span>${languageName}</span>`;
       }
 
-      // If target language equals source, restore original content.
+      // If the target language is the source language, restore original content.
       if (targetLanguage === this.config.sourceLanguage) {
         this._restoreOriginalContent();
         return;
@@ -211,38 +208,40 @@
       this._translationRetries = 0;
       this._showLoadingIndicator();
 
-      // Send the translation request (using cache if available).
+      // Send translation request (using cache if available).
       this._sendTranslationRequest(content, (translations) => {
         this._applyTranslations(translations);
         this._hideLoadingIndicator();
       });
     },
 
-    // Sends a translation request; uses local cache to avoid duplicate API requests.
+    // Sends a translation request to the API, using localStorage as a cache.
     _sendTranslationRequest: function(content, callback) {
-      let cache = this._getCache();
+      const cache = this._getCache();
       const contentToRequest = [];
       const cachedResponses = [];
+      
+      // Retrieve the original text mapping from localStorage.
+      const storedOriginal = localStorage.getItem(this._originalContentKey);
+      const originalMapping = storedOriginal ? JSON.parse(storedOriginal) : {};
 
-      // Process each content item.
       content.forEach(item => {
-        // Use stored original text if available.
-        const originalText = item.element.dataset.originalText || item.text;
-        // Compute hash from original text.
+        // Use the saved original text if available.
+        const originalText = originalMapping[item.id] || item.text;
+        // Compute hash from the original text.
         const hash = this._computeHash(originalText);
-        // Compose a cache key using hash and target language.
+        // Compose cache key using the hash and target language.
         const cacheKey = hash + "-" + this.config.targetLanguage;
         if (cache[cacheKey]) {
-          // If cached, add to responses.
           cachedResponses.push({ id: item.id, translated: cache[cacheKey] });
         } else {
-          // Save the computed hash on the item, so we can update the cache later.
+          // Save the computed hash in the item for later use.
           item.hash = hash;
           contentToRequest.push(item);
         }
       });
 
-      // If all content is cached, use the cached responses.
+      // If all content is cached, return the cached responses.
       if (contentToRequest.length === 0) {
         callback(cachedResponses);
         return;
@@ -282,14 +281,12 @@
         }
         // Update cache with newly received translations.
         data.translations.forEach(translation => {
-          // Find the original item to get its hash.
           const originalItem = contentToRequest.find(item => item.id === translation.id);
           if (originalItem) {
             const key = originalItem.hash + "-" + this.config.targetLanguage;
             cache[key] = translation.translated;
           }
         });
-        // Save updated cache.
         this._setCache(cache);
         // Combine cached responses with API responses.
         const combined = cachedResponses.concat(data.translations);
@@ -306,17 +303,14 @@
       translations.forEach(translation => {
         const element = document.getElementById(translation.id);
         if (!element) return;
-        if (!element.dataset.originalText) {
-          element.dataset.originalText = element.textContent;
-        }
         element.textContent = translation.translated;
-        // Remove any previous translation classes (classes starting with "translated-")
+        // Remove any previous translation class (classes starting with "translated-")
         Array.from(element.classList).forEach(cls => {
           if (cls.indexOf("translated-") === 0) {
             element.classList.remove(cls);
           }
         });
-        // Add a new class for the current target language.
+        // Add a new translation class for the current target language.
         element.classList.add(`translated-${this.config.targetLanguage}`);
       });
     },
