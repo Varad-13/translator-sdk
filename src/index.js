@@ -8,7 +8,7 @@
     config: {
       apiUrl: API_URL,
       siteId: null,
-      sourceLanguage: "en", // Source = "Original"
+      sourceLanguage: "en", // "Original" text
       targetLanguage: null,
       apiKey: null,
       autoTranslate: true,
@@ -20,6 +20,7 @@
         exclude: ['.no-translate', '[data-no-translate]']
       }
     },
+
     _translationRetries: 0,
     _languageSelectorButton: null,
     _languageMapping: {
@@ -31,7 +32,6 @@
       pa: 'ਪੰਜਾਬੀ (Punjabi)',
       gu: 'ગુજરાતી (Gujarati)'
     },
-    // LocalStorage keys
     _originalContentKey: "translationSDK_originalContent",  // mapping: hash -> original text
     _cacheKey: "translationSDK_cache",                      // mapping: hash-targetLanguage -> translated text
 
@@ -56,15 +56,15 @@
       console.log("[Hash] Computing hash for string:", str);
       let hash = 5381;
       for (let i = 0; i < str.length; i++) {
-        hash = ((hash << 5) + hash) + str.charCodeAt(i); // hash * 33 + c
+        hash = ((hash << 5) + hash) + str.charCodeAt(i);
       }
       const computedHash = (hash >>> 0).toString(16);
       console.log("[Hash] Computed hash:", computedHash);
       return computedHash;
     },
-    /* --------------------------------------------- */
+    /* -------------------------------------------- */
 
-    // --- Step 2 & 3: Scrape content, compute & set hash as element id ---
+    // Extracts content, computes a stable hash from original text, and sets it as the element ID.
     extractContent: function() {
       console.log("[Extract] Extracting content using selectors.");
       const includeSelector = this.config.selectors.include.join(',');
@@ -74,45 +74,29 @@
       const filtered = elements.filter(el => !excluded.some(ex => ex.contains(el) || el.contains(ex)));
       console.log("[Extract] Found", filtered.length, "elements after filtering.");
 
-      // For each element, use its current text (trimmed) and assign the hash as its id.
       const extracted = filtered.map(el => {
         const originalText = el.textContent.trim();
         if (!originalText) return null;
-        // IMPORTANT: Only compute & set the hash once.
-        let key = el.id; // If already set, use it.
+        // Only compute hash once
+        let key = el.id;
         if (!key || key.length === 0) {
           key = this._computeHash(originalText);
-          el.id = key;  // Set the element id to the computed hash.
+          el.id = key;
           console.log("[Extract] Assigned new id to element:", key);
         } else {
           console.log("[Extract] Using existing id for element:", key);
         }
-        // You can add additional context if needed.
         return {
           id: key,
           text: originalText,
-          element: el,
-          type: this._getElementType(el),
-          context: {}  // Can be expanded if needed.
+          element: el
         };
       }).filter(item => item !== null);
       console.log("[Extract] Extracted", extracted.length, "content items.");
       return extracted;
     },
 
-    // Determine element type based on tag.
-    _getElementType: function(el) {
-      const tag = el.tagName.toLowerCase();
-      if (['h1','h2','h3','h4','h5','h6'].includes(tag)) return 'heading';
-      if (tag === 'p') return 'paragraph';
-      if (tag === 'li') return 'list-item';
-      if (['td','th'].includes(tag)) return 'table-cell';
-      if (tag === 'button') return 'button';
-      if (tag === 'a') return 'link';
-      return 'other';
-    },
-
-    // --- Step 4: Save original mapping (hash → original text) ---
+    // Save mapping (hash -> original text) in localStorage.
     _saveOriginalContent: function() {
       console.log("[Original] Saving original content...");
       const content = this.extractContent();
@@ -124,9 +108,9 @@
       console.log("[Original] Original content saved:", mapping);
     },
 
-    // --- Helper: Build array of original items using stored mapping ---
+    // Retrieve original items.
     _getOriginalContent: function() {
-      console.log("[Original] Retrieving original content mapping from localStorage.");
+      console.log("[Original] Retrieving original content mapping.");
       const stored = localStorage.getItem(this._originalContentKey);
       if (!stored) {
         console.warn("[Original] No original content mapping found.");
@@ -140,9 +124,7 @@
           items.push({
             id: key,
             text: mapping[key],
-            element: el,
-            type: this._getElementType(el),
-            context: {}
+            element: el
           });
         }
       }
@@ -150,12 +132,12 @@
       return items;
     },
 
-    // --- Step 10: Restore original text when target is source ---
+    // Restore elements to their original text using the stored mapping.
     _restoreOriginalContent: function() {
       console.log("[Restore] Restoring original content...");
       const mappingStr = localStorage.getItem(this._originalContentKey);
       if (!mappingStr) {
-        console.warn("[Restore] No original content mapping found in localStorage.");
+        console.warn("[Restore] No original content found.");
         return;
       }
       const mapping = JSON.parse(mappingStr);
@@ -163,51 +145,48 @@
         const el = document.getElementById(key);
         if (el) {
           el.textContent = mapping[key];
-          // Remove any translation-specific CSS classes.
           Array.from(el.classList).forEach(cls => {
             if (cls.indexOf("translated-") === 0) {
               el.classList.remove(cls);
               console.log(`[Restore] Removed class ${cls} from element ${key}`);
             }
           });
-          console.log(`[Restore] Restored element ${key} to original text.`);
+          console.log(`[Restore] Restored element ${key}`);
         }
       }
       console.log("[Restore] Finished restoring original content.");
     },
 
-    // --- Step 5: Translate page (auto or on stored target language) ---
+    // Main translation method.
     translatePage: function(targetLanguage) {
       console.log(`[Translate] Translating page to: ${targetLanguage}`);
       this.config.targetLanguage = targetLanguage;
       localStorage.setItem('translation_language', targetLanguage);
-      console.log("[Translate] Saved target language in localStorage:", targetLanguage);
+      console.log("[Translate] Saved target language:", targetLanguage);
 
       if (this._languageSelectorButton) {
         const name = this._languageMapping[targetLanguage] || targetLanguage;
         this._languageSelectorButton.innerHTML = `<span>🌐</span> <span>${name}</span>`;
-        console.log("[Translate] Updated language selector button to:", name);
+        console.log("[Translate] Updated language selector to:", name);
       }
 
-      // Step 10: If target equals source, restore original text.
+      // If source (original) is requested, restore original text.
       if (targetLanguage === this.config.sourceLanguage) {
-        console.log("[Translate] Target language is the source. Restoring original content.");
+        console.log("[Translate] Target is source language. Restoring original content.");
         this._restoreOriginalContent();
         return;
       }
 
-      // --- Step 6: Get original items using stable keys ---
       const originalItems = this._getOriginalContent();
       if (originalItems.length === 0 && this._translationRetries < 3) {
         this._translationRetries++;
-        console.warn("[Translate] No original items found; retrying in 500ms. Retry count:", this._translationRetries);
+        console.warn("[Translate] No original items; retrying in 500ms. Retry count:", this._translationRetries);
         setTimeout(() => { this.translatePage(targetLanguage); }, 500);
         return;
       }
       this._translationRetries = 0;
       this._showLoadingIndicator();
 
-      // --- Step 7: Try cache, else call API ---
       this._sendTranslationRequest(originalItems, (translations) => {
         console.log("[Translate] Received translations:", translations);
         this._applyTranslations(translations);
@@ -215,7 +194,7 @@
       });
     },
 
-    // --- Step 7 & 8: Send API request if cache is missing; update cache on response ---
+    // Check cache for each item; if missing, send API request.
     _sendTranslationRequest: function(contentItems, callback) {
       console.log("[API] Starting translation request for", contentItems.length, "items.");
       const cache = this._getCache();
@@ -223,19 +202,18 @@
       const cachedResults = [];
 
       contentItems.forEach(item => {
-        // Use the already-set hash (item.id) to build cache key.
         const cacheKey = item.id + "-" + this.config.targetLanguage;
         if (cache[cacheKey]) {
           console.log(`[API] Cache hit for ${item.id} with key ${cacheKey}`);
           cachedResults.push({ id: item.id, translated: cache[cacheKey] });
         } else {
-          console.log(`[API] Cache miss for ${item.id} with key ${cacheKey}. Queuing for API.`);
+          console.log(`[API] Cache miss for ${item.id} with key ${cacheKey}.`);
           toRequest.push(item);
         }
       });
 
       if (toRequest.length === 0) {
-        console.log("[API] All translations found in cache.");
+        console.log("[API] All items found in cache.");
         callback(cachedResults);
         return;
       }
@@ -245,13 +223,13 @@
         targetLanguage: this.config.targetLanguage,
         siteId: this.config.siteId,
         content: toRequest.map(item => ({
-          id: item.id,  // Using our stable hash.
+          id: item.id,
           text: item.text,
           type: item.type,
           context: item.context
         }))
       };
-      console.log("[API] Sending payload to API:", payload);
+      console.log("[API] Sending payload:", payload);
 
       fetch(this.config.apiUrl, {
         method: "POST",
@@ -262,7 +240,7 @@
         body: JSON.stringify(payload)
       })
       .then(response => {
-        console.log("[API] Received response with status:", response.status);
+        console.log("[API] Response status:", response.status);
         if (!response.ok) {
           throw new Error("Translation API error: " + response.statusText);
         }
@@ -293,30 +271,28 @@
       });
     },
 
-    // --- Step 8: Apply translations to page elements ---
+    // Apply translations to the corresponding elements.
     _applyTranslations: function(translations) {
       console.log("[Apply] Applying translations to elements.");
       translations.forEach(translation => {
         const el = document.getElementById(translation.id);
         if (!el) {
-          console.warn("[Apply] No element found for key:", translation.id);
+          console.warn("[Apply] No element found for", translation.id);
           return;
         }
         el.textContent = translation.translated;
-        // Remove any existing translation class.
         Array.from(el.classList).forEach(cls => {
           if (cls.indexOf("translated-") === 0) {
             el.classList.remove(cls);
-            console.log(`[Apply] Removed old class ${cls} from element ${translation.id}`);
+            console.log(`[Apply] Removed old class ${cls} from ${translation.id}`);
           }
         });
         el.classList.add(`translated-${this.config.targetLanguage}`);
-        console.log(`[Apply] Updated element ${translation.id} with translation:`, translation.translated);
+        console.log(`[Apply] Updated ${translation.id} with translation:`, translation.translated);
       });
       console.log("[Apply] Finished applying translations.");
     },
 
-    // --- Simple UI Loader ---
     _showLoadingIndicator: function() {
       console.log("[UI] Showing loading indicator.");
       if (document.querySelector('.translation-loading-indicator')) return;
@@ -341,7 +317,6 @@
       if (indicator) indicator.remove();
     },
 
-    // --- Route change listener for single-page apps ---
     _setupRouteChangeListener: function() {
       console.log("[Route] Setting up route change listener.");
       const _pushState = history.pushState;
@@ -368,9 +343,8 @@
       });
     },
 
-    // --- Language selector UI ---
     _addLanguageSelector: function() {
-      console.log("[UI] Adding language selector.");
+      console.log("[UI] Adding language selector UI.");
       const container = document.createElement('div');
       container.className = 'translation-language-selector no-translate';
       container.style.position = 'fixed';
@@ -426,6 +400,7 @@
         option.style.width = '100%';
         option.style.fontSize = '14px';
         option.style.fontFamily = 'system-ui, sans-serif';
+
         option.addEventListener('click', () => {
           console.log(`[UI] Language option selected: ${lang.code}`);
           TranslationSDK.translatePage(lang.code);
@@ -435,6 +410,7 @@
           });
           option.style.backgroundColor = '#f0f0f0';
         });
+
         dropdown.appendChild(option);
       });
 
@@ -452,7 +428,7 @@
       container.appendChild(button);
       container.appendChild(dropdown);
       document.body.appendChild(container);
-      console.log("[UI] Language selector added.");
+      console.log("[UI] Language selector UI added.");
     }
   };
 
