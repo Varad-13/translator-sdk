@@ -389,11 +389,26 @@
         const allElements = this.extractContent();
         const stored = localStorage.getItem(this._originalContentKey);
         const mapping = stored ? JSON.parse(stored) : {};
+        const cache = this._getCache();
+        
         const untranslated = allElements.filter(item => {
-          const hasTranslatedClass = Array.from(item.element.classList).some(cls => cls === `translated-${this.config.targetLanguage}`);
-          const isStored = mapping[item.id];
-          return !hasTranslatedClass && !hasTranslatedClass && item.text.length > 0;
+          const translatedClass = `translated-${this.config.targetLanguage}`;
+          const hasTranslatedClass = item.element.classList.contains(translatedClass);
+        
+          const cacheKey = item.id + "-" + this.config.targetLanguage;
+          const expectedTranslation = cache[cacheKey];
+        
+          // If it has the class but still has original text, it’s stale
+          const isStale = hasTranslatedClass && expectedTranslation && item.element.textContent.trim() !== expectedTranslation;
+          if (isStale) {
+            item.element.classList.remove(translatedClass);
+          }
+          return (
+            (!hasTranslatedClass || isStale) &&
+            item.text.length > 0
+          );
         });
+
     
         if (untranslated.length > 0) {
           console.log(`[Loop] Found ${untranslated.length} new untranslated elements.`);
