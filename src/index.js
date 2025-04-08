@@ -3,34 +3,6 @@
 
   // API configuration
   const API_URL = "http://localhost:8000/api/v1/translate";
-  // Unique delimiter for splitting concatenated text segments.
-  const DELIMITER = "|||";
-
-  /**
-   * For a given element, find all its nonempty text nodes and return them as an array.
-   * @param {Element} element - A DOM element.
-   * @returns {Array} Array of text nodes.
-   */
-  function getTextNodes(element) {
-    const textNodes = [];
-    const walker = document.createTreeWalker(
-      element,
-      NodeFilter.SHOW_TEXT,
-      {
-        acceptNode: function(node) {
-          return node.nodeValue.trim().length > 0
-            ? NodeFilter.FILTER_ACCEPT
-            : NodeFilter.FILTER_REJECT;
-        }
-      },
-      false
-    );
-    let currentNode;
-    while ((currentNode = walker.nextNode())) {
-      textNodes.push(currentNode);
-    }
-    return textNodes;
-  }
 
   // Main SDK object
   const TranslationSDK = {
@@ -42,17 +14,17 @@
       apiKey: null,
       autoTranslate: true,
       selectors: {
+        // Target elements that usually contain user-facing text.
         include: ['div', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'td', 'th', 'button', 'a', 'label', 'span'],
+        // Exclude elements explicitly marked as not for translation.
         exclude: ['.no-translate', '[data-no-translate]']
       }
     },
 
-    // Initialize the SDK with options.
+    // Initializes the SDK with user-provided options.
     init: function(options) {
-      // Merge user options with defaults.
       this.config = { ...this.config, ...options };
 
-      // siteId and apiKey are required.
       if (!this.config.siteId || !this.config.apiKey) {
         console.error('TranslationSDK: siteId and apiKey are required');
         return;
@@ -61,14 +33,15 @@
       // Add the language selector UI.
       this._addLanguageSelector();
 
-      // If autoTranslate is enabled and targetLanguage is set, start translation.
+      // If autoTranslate is enabled and a target language is provided, translate immediately.
       if (this.config.autoTranslate && this.config.targetLanguage) {
         this.translatePage(this.config.targetLanguage);
       }
+
       return this;
     },
 
-    // Extract translatable elements from the page (excluding those that match the exclude selectors).
+    // Extracts candidate elements from the page using include and exclude selectors.
     extractContent: function() {
       const includeSelector = this.config.selectors.include.join(',');
       const elements = Array.from(document.querySelectorAll(includeSelector));
@@ -76,60 +49,51 @@
       const excludeSelector = this.config.selectors.exclude.join(',');
       const excludedElements = excludeSelector ? Array.from(document.querySelectorAll(excludeSelector)) : [];
 
-      // Filter out excluded elements.
+      // Filter out elements matching the exclude selectors.
       const filteredElements = elements.filter(el => {
-        return !excludedElements.some(excluded => excluded.contains(el) || el.contains(excluded));
+         return !excludedElements.some(excluded => excluded.contains(el) || el.contains(excluded));
       });
 
-      // Ensure each element has an ID and attach basic context.
+      // Ensure each candidate has an ID and attach a little context.
       return filteredElements.map(el => {
-        if (!el.id) {
-          el.id = `el-${Math.random().toString(36).substr(2, 9)}`;
-        }
-        const sectionEl = el.closest('section, article, div.section');
-        const sectionTitle = sectionEl ? sectionEl.querySelector('h1, h2, h3')?.textContent.trim() : '';
-        
-        // The context can be expanded as needed.
-        return {
-          id: el.id,
-          element: el,
-          context: {
-            sectionTitle: sectionTitle
-          }
-        };
+         if (!el.id) {
+            el.id = `el-${Math.random().toString(36).substr(2, 9)}`;
+         }
+         const sectionEl = el.closest('section, article, div.section');
+         const sectionTitle = sectionEl ? (sectionEl.querySelector('h1, h2, h3')?.textContent.trim() || "") : "";
+         return {
+            id: el.id,
+            element: el,
+            context: {
+               sectionTitle: sectionTitle
+            }
+         };
       });
     },
 
-    // Translate the page by processing each element.
+    // Translates the page by processing each candidate element individually.
     translatePage: function(targetLanguage) {
-      // Set target language and save preference.
+      // Save the target language.
       this.config.targetLanguage = targetLanguage;
       localStorage.setItem('translation_language', targetLanguage);
+      const contentItems = this.extractContent();
 
-      const content = this.extractContent();
-
-      // If target equals the source language, restore original content.
+      // If the target language equals the source, restore original text if available.
       if (targetLanguage === this.config.sourceLanguage) {
-        content.forEach(item => {
-          const el = document.getElementById(item.id);
-          if (el && el.dataset.originalText) {
-            // Restore the original text across all text nodes.
-            let textNodes = getTextNodes(el);
-            // Here we assume the stored originalText was the full aggregation.
-            // For simplicity, we replace the entire element's innerText.
-            el.innerText = el.dataset.originalText;
-          }
-        });
-        return;
+         contentItems.forEach(item => {
+             const el = item.element;
+             if (el.dataset.originalText) {
+                 el.innerText = el.dataset.originalText;
+             }
+         });
+         return;
       }
 
-      // Show a loading indicator.
       this._showLoadingIndicator();
 
-      // Process each element individually.
-      content.forEach(item => {
-        // For each element, process all its text nodes.
-        this._translateElement(item);
+      // Process each element with a single API request per element.
+      contentItems.forEach(item => {
+         this._translateElement(item);
       });
 
       // Hide the loading indicator after a short delay.
@@ -137,153 +101,127 @@
     },
 
     /**
-     * Translates a single element's text without affecting its inner structure.
-     * It combines all text nodes using a delimiter, sends them for translation,
-     * and then splits the translation to update each text node.
+     * Translates a single element:
+     * - It extracts the element’s aggregated text (via innerText).
+     * - Saves the original text (for later restoration if needed).
+     * - Checks for a cached translation.
+     * - If none exists, it sends a POST request with the text and context.
+     * - On response, it updates only the text content of the element.
      *
-     * @param {Object} item - Object with element info { id, element, context }.
+     * This method ensures that the element’s structure (images, markup, styling) remains unchanged.
      */
     _translateElement: function(item) {
       const el = item.element;
-      // Get all nonempty text nodes.
-      const textNodes = getTextNodes(el);
-      if (textNodes.length === 0) return;
-
-      // Save the original aggregate text if not already saved.
+      const originalText = el.innerText.trim();
+      if (!originalText) return;
+      
+      // Save the original text if not already saved.
       if (!el.dataset.originalText) {
-        el.dataset.originalText = el.innerText;
+         el.dataset.originalText = originalText;
       }
-
-      // Build the combined text using the delimiter.
-      const originalTexts = textNodes.map(node => node.nodeValue);
-      const combinedText = originalTexts.join(DELIMITER);
 
       // Check for a cached translation.
-      const cached = this._getCachedTranslation(item.id, combinedText, this.config.targetLanguage);
+      const cached = this._getCachedTranslation(item.id, originalText, this.config.targetLanguage);
       if (cached) {
-        this._applyTranslatedText(el, cached);
-        return;
+         this._applyTranslatedText(el, cached);
+         return;
       }
 
-      // Build payload with additional context if needed.
+      // Prepare the payload.
       const payload = {
-        sourceLanguage: this.config.sourceLanguage,
-        targetLanguage: this.config.targetLanguage,
-        siteId: this.config.siteId,
-        content: [{
-          id: item.id,
-          text: combinedText,
-          context: item.context
-        }]
+         sourceLanguage: this.config.sourceLanguage,
+         targetLanguage: this.config.targetLanguage,
+         siteId: this.config.siteId,
+         content: [{
+             id: item.id,
+             text: originalText,
+             type: "paragraph", // Adjust this as needed.
+             context: item.context
+         }]
       };
 
-      // Send the payload via a POST request.
+      // Send a POST request to the translation API.
       fetch(this.config.apiUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${this.config.apiKey}`
-        },
-        body: JSON.stringify(payload)
+         method: "POST",
+         headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${this.config.apiKey}`
+         },
+         body: JSON.stringify(payload)
       })
       .then(response => {
-        if (!response.ok) {
-          throw new Error("Translation API error: " + response.statusText);
-        }
-        return response.json();
+         if (!response.ok) {
+           throw new Error("Translation API error: " + response.statusText);
+         }
+         return response.json();
       })
       .then(data => {
-        if (data.error || !data.translations || data.translations.length === 0) {
-          console.error('Translation error:', data.error);
-          return;
-        }
-        // We expect a single translation corresponding to the combined text.
-        const translatedCombined = data.translations[0].text;
-        // Cache the translation.
-        this._cacheTranslation(item.id, combinedText, translatedCombined, this.config.targetLanguage);
-        // Apply the translation.
-        this._applyTranslatedText(el, translatedCombined);
+         if (data.error || !data.translations || data.translations.length === 0) {
+            console.error('Translation error:', data.error);
+            return;
+         }
+         // Expect the API to return a single translation corresponding to the text.
+         const translatedText = data.translations[0].translated;
+         this._cacheTranslation(item.id, originalText, translatedText, this.config.targetLanguage);
+         this._applyTranslatedText(el, translatedText);
       })
       .catch(error => {
-        console.error("Translation request failed:", error);
+         console.error("Translation request failed:", error);
       });
     },
 
-    /**
-     * Splits the translated combined text using the delimiter and updates each text node.
-     * If the split parts count does not match, falls back to replacing innerText.
-     *
-     * @param {Element} el - The DOM element to update.
-     * @param {string} translatedCombined - The full translated text.
-     */
-    _applyTranslatedText: function(el, translatedCombined) {
-      const textNodes = getTextNodes(el);
-      const parts = translatedCombined.split(DELIMITER);
-      if (parts.length !== textNodes.length) {
-        // If a mismatch occurs, use innerText replacement (fallback).
-        el.innerText = translatedCombined;
-      } else {
-        textNodes.forEach((node, i) => {
-          node.nodeValue = parts[i];
-        });
-      }
+    // Applies the translated text by replacing the element's innerText.
+    // This ensures that only the user-facing text changes, leaving images, styling, and structure intact.
+    _applyTranslatedText: function(el, translatedText) {
+      el.innerText = translatedText;
     },
 
     /**
-     * Retrieves a cached translation for a given element and its original combined text.
-     *
-     * @param {string} elementId
-     * @param {string} originalCombined
-     * @param {string} targetLanguage
-     * @returns {string|null} The translated combined text or null.
+     * Retrieves a cached translation for a given element.
+     * The cache key combines the site ID, element ID, source language, and target language.
      */
-    _getCachedTranslation: function(elementId, originalCombined, targetLanguage) {
-      const cacheKey = `translation_${this.config.siteId}_${elementId}_${this.config.sourceLanguage}_${targetLanguage}`;
-      const cached = localStorage.getItem(cacheKey);
-      if (!cached) return null;
-      try {
-        const cache = JSON.parse(cached);
-        const now = Date.now();
-        // Cache expires after 24 hours.
-        if (now - cache.timestamp > 24 * 60 * 60 * 1000) {
+    _getCachedTranslation: function(elementId, originalText, targetLanguage) {
+       const cacheKey = `translation_${this.config.siteId}_${elementId}_${this.config.sourceLanguage}_${targetLanguage}`;
+       const cached = localStorage.getItem(cacheKey);
+       if (!cached) return null;
+       try {
+          const cache = JSON.parse(cached);
+          const now = Date.now();
+          // Cache expiry: 24 hours.
+          if (now - cache.timestamp > 24 * 60 * 60 * 1000) {
+             localStorage.removeItem(cacheKey);
+             return null;
+          }
+          // Use the cached translation only if the original text matches.
+          if (cache.original === originalText) {
+             return cache.translated;
+          }
+          return null;
+       } catch(e) {
+          console.error('Cache parsing error:', e);
           localStorage.removeItem(cacheKey);
           return null;
-        }
-        // Only use the cache if the original text is identical.
-        if (cache.original === originalCombined) {
-          return cache.translated;
-        }
-        return null;
-      } catch (e) {
-        console.error('Cache parsing error:', e);
-        localStorage.removeItem(cacheKey);
-        return null;
-      }
+       }
     },
 
     /**
-     * Caches the translated combined text for an element.
-     *
-     * @param {string} elementId
-     * @param {string} originalCombined
-     * @param {string} translatedCombined
-     * @param {string} targetLanguage
+     * Caches the translated text for a given element.
      */
-    _cacheTranslation: function(elementId, originalCombined, translatedCombined, targetLanguage) {
-      const cacheKey = `translation_${this.config.siteId}_${elementId}_${this.config.sourceLanguage}_${targetLanguage}`;
-      const cacheData = { 
-        original: originalCombined, 
-        translated: translatedCombined, 
-        timestamp: Date.now() 
-      };
-      try {
-        localStorage.setItem(cacheKey, JSON.stringify(cacheData));
-      } catch (e) {
-        console.error('Cache saving error:', e);
-      }
+    _cacheTranslation: function(elementId, originalText, translatedText, targetLanguage) {
+       const cacheKey = `translation_${this.config.siteId}_${elementId}_${this.config.sourceLanguage}_${targetLanguage}`;
+       const cacheData = {
+          original: originalText,
+          translated: translatedText,
+          timestamp: Date.now()
+       };
+       try {
+         localStorage.setItem(cacheKey, JSON.stringify(cacheData));
+       } catch(e) {
+         console.error('Cache saving error:', e);
+       }
     },
 
-    // Add the language selector UI to the document.
+    // Adds a language selector UI that lets users choose a language.
     _addLanguageSelector: function() {
       const container = document.createElement('div');
       container.className = 'translation-language-selector no-translate';
@@ -315,62 +253,62 @@
       dropdown.style.padding = '5px 0';
       dropdown.style.borderTop = '1px solid #ddd';
 
-      // Languages list including an option for original.
+      // List of supported languages.
       const languages = [
-        { code: this.config.sourceLanguage, name: 'Original' },
-        { code: 'hi', name: 'हिन्दी (Hindi)' },
-        { code: 'mr', name: 'मराठी (Marathi)' },
-        { code: 'ta', name: 'தமிழ் (Tamil)' },
-        { code: 'kn', name: 'ಕನ್ನಡ (Kannada)' },
-        { code: 'pa', name: 'ਪੰਜਾਬੀ (Punjabi)' },
-        { code: 'gu', name: 'ગુજરાતી (Gujarati)' }
+         { code: this.config.sourceLanguage, name: 'Original' },
+         { code: 'hi', name: 'हिन्दी (Hindi)' },
+         { code: 'mr', name: 'मराठी (Marathi)' },
+         { code: 'ta', name: 'தமிழ் (Tamil)' },
+         { code: 'kn', name: 'ಕನ್ನಡ (Kannada)' },
+         { code: 'pa', name: 'ਪੰਜਾਬੀ (Punjabi)' },
+         { code: 'gu', name: 'ગુજરાતી (Gujarati)' }
       ];
 
       const savedLanguage = localStorage.getItem('translation_language');
 
       languages.forEach(lang => {
-        const option = document.createElement('button');
-        option.textContent = lang.name;
-        option.dataset.language = lang.code;
-        option.style.background = 'none';
-        option.style.border = 'none';
-        option.style.padding = '8px 15px';
-        option.style.textAlign = 'left';
-        option.style.cursor = 'pointer';
-        option.style.width = '100%';
-        option.style.fontSize = '14px';
-        option.style.fontFamily = 'system-ui, sans-serif';
+         const option = document.createElement('button');
+         option.textContent = lang.name;
+         option.dataset.language = lang.code;
+         option.style.background = 'none';
+         option.style.border = 'none';
+         option.style.padding = '8px 15px';
+         option.style.textAlign = 'left';
+         option.style.cursor = 'pointer';
+         option.style.width = '100%';
+         option.style.fontSize = '14px';
+         option.style.fontFamily = 'system-ui, sans-serif';
 
-        if (savedLanguage === lang.code) {
-          option.style.backgroundColor = '#f0f0f0';
-          button.innerHTML = `<span>🌐</span> <span>${lang.name}</span>`;
-          if (this.config.autoTranslate) {
-            this.config.targetLanguage = lang.code;
-          }
-        }
+         if (savedLanguage === lang.code) {
+             option.style.backgroundColor = '#f0f0f0';
+             button.innerHTML = `<span>🌐</span> <span>${lang.name}</span>`;
+             if (this.config.autoTranslate) {
+                this.config.targetLanguage = lang.code;
+             }
+         }
 
-        option.addEventListener('click', () => {
-          this.translatePage(lang.code);
-          button.innerHTML = `<span>🌐</span> <span>${lang.name}</span>`;
-          dropdown.style.display = 'none';
-          Array.from(dropdown.children).forEach(child => {
-            child.style.backgroundColor = 'transparent';
-          });
-          option.style.backgroundColor = '#f0f0f0';
-        });
+         option.addEventListener('click', () => {
+           this.translatePage(lang.code);
+           button.innerHTML = `<span>🌐</span> <span>${lang.name}</span>`;
+           dropdown.style.display = 'none';
+           Array.from(dropdown.children).forEach(child => {
+             child.style.backgroundColor = 'transparent';
+           });
+           option.style.backgroundColor = '#f0f0f0';
+         });
 
-        dropdown.appendChild(option);
+         dropdown.appendChild(option);
       });
 
       button.addEventListener('click', (e) => {
-        e.stopPropagation();
-        dropdown.style.display = dropdown.style.display === 'none' ? 'block' : 'none';
+         e.stopPropagation();
+         dropdown.style.display = dropdown.style.display === 'none' ? 'block' : 'none';
       });
 
       document.addEventListener('click', (e) => {
-        if (!container.contains(e.target)) {
-          dropdown.style.display = 'none';
-        }
+         if (!container.contains(e.target)) {
+            dropdown.style.display = 'none';
+         }
       });
 
       container.appendChild(button);
@@ -378,7 +316,7 @@
       document.body.appendChild(container);
     },
 
-    // Display a loading indicator.
+    // Displays a simple loading indicator.
     _showLoadingIndicator: function() {
       if (document.querySelector('.translation-loading-indicator')) return;
       const indicator = document.createElement('div');
@@ -397,15 +335,15 @@
       document.body.appendChild(indicator);
     },
 
-    // Remove the loading indicator.
+    // Removes the loading indicator.
     _hideLoadingIndicator: function() {
       const indicator = document.querySelector('.translation-loading-indicator');
       if (indicator) {
-        indicator.remove();
+         indicator.remove();
       }
     }
   };
 
-  // Expose the SDK to the global window object.
+  // Expose the SDK globally.
   window.TranslationSDK = TranslationSDK;
 })(window);
