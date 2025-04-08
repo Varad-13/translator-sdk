@@ -379,51 +379,37 @@
     },
 
     // --- Step 11: Mutation Observer to handle dynamic DOM changes ---
-    _setupMutationObserver: function() {
-      console.log("[Observer] Setting up MutationObserver for DOM changes.");
-      const observer = new MutationObserver(mutations => {
-        console.log("[Observer] Mutation detected:", mutations);
-        // Debounce updates; wait 300ms after last change
-        if (this._mutationTimeout) {
-          clearTimeout(this._mutationTimeout);
+    _startTranslationPolling: function() {
+      console.log("[Loop] Starting translation polling loop...");
+      setInterval(() => {
+        if (!this.config.targetLanguage || this.config.targetLanguage === this.config.sourceLanguage) {
+          return;
         }
-        this._mutationTimeout = setTimeout(() => {
-          this._handleMutations();
-        }, 300);
-      });
-      observer.observe(document.body, { childList: true, subtree: true });
-      this._observer = observer;
-      console.log("[Observer] MutationObserver set.");
-    },
-
-    _handleMutations: function() {
-      console.log("[Observer] Processing DOM mutations.");
-      const allItems = this.extractContent();
-      const stored = localStorage.getItem(this._originalContentKey);
-      const mapping = stored ? JSON.parse(stored) : {};
-      const newItems = allItems.filter(item => !(item.id in mapping));
-      if (newItems.length > 0) {
-        console.log("[Observer] Found", newItems.length, "new dynamic content items.");
-        newItems.forEach(item => {
-          mapping[item.id] = {
-            text: item.text,
-            type: item.type,
-            context: item.context
-          };
+    
+        const allElements = this.extractContent();
+        const stored = localStorage.getItem(this._originalContentKey);
+        const mapping = stored ? JSON.parse(stored) : {};
+        const untranslated = allElements.filter(item => {
+          const hasTranslatedClass = Array.from(item.element.classList).some(cls => cls === `translated-${this.config.targetLanguage}`);
+          const isStored = mapping[item.id];
+          return !hasTranslatedClass && !hasTranslatedClass && item.text.length > 0;
         });
-        localStorage.setItem(this._originalContentKey, JSON.stringify(mapping));
-        console.log("[Observer] Updated original mapping with new items:", mapping);
-        // If target language is active (and not source) translate new items.
-        if (this.config.targetLanguage &&
-            this.config.targetLanguage !== this.config.sourceLanguage) {
-          this._sendTranslationRequest(newItems, (translations) => {
-            console.log("[Observer] Received translations for new items:", translations);
+    
+        if (untranslated.length > 0) {
+          console.log(`[Loop] Found ${untranslated.length} new untranslated elements.`);
+          untranslated.forEach(item => {
+            mapping[item.id] = {
+              text: item.text,
+              type: item.type,
+              context: item.context
+            };
+          });
+          localStorage.setItem(this._originalContentKey, JSON.stringify(mapping));
+          this._sendTranslationRequest(untranslated, translations => {
             this._applyTranslations(translations);
           });
         }
-      } else {
-        console.log("[Observer] No new items found.");
-      }
+      }, 1000); // every 1 second
     },
 
     // --- UI: Language Selector ---
@@ -530,7 +516,7 @@
       // Set up UI components, route change listener, and mutation observer.
       this._addLanguageSelector();
       this._setupRouteChangeListener();
-      this._setupMutationObserver();
+      this._startTranslationPolling();
 
       const storedLanguage = localStorage.getItem('translation_language');
       console.log("[Init] Stored language:", storedLanguage);
