@@ -118,27 +118,11 @@
         return;
       }
 
-      // Try retrieving cached translations.
-      const cachedTranslations = this._getCachedTranslations(content, targetLanguage);
-      console.log(cachedTranslations)
-      if (cachedTranslations && cachedTranslations.length > 0) {
-        this._applyTranslations(cachedTranslations);
-      }
-
-      // Identify content that hasn't been cached.
-      const contentToTranslate = content.filter(item => {
-        if (!cachedTranslations) return true;
-        return !cachedTranslations.some(cached => cached.id === item.id);
-      });
-      console.log(contentToTranslate)
-      if (contentToTranslate.length === 0) return;  // All content already translated.
-
       this._showLoadingIndicator();
 
       // Send request to the API.
-      this._sendTranslationRequest(contentToTranslate, (translations) => {
+      this._sendTranslationRequest(content, (translations) => {
         this._applyTranslations(translations);
-        this._cacheTranslations(translations, targetLanguage);
         this._hideLoadingIndicator();
       });
     },
@@ -194,62 +178,6 @@
         }
         element.textContent = translation.translated;
       });
-    },
-
-    // Retrieves cached translations from localStorage.
-    _getCachedTranslations: function(content, targetLanguage) {
-      const cacheKey = `translations_${this.config.siteId}_${this.config.sourceLanguage}_${targetLanguage}`;
-      const cached = localStorage.getItem(cacheKey);
-      if (!cached) return null;
-      try {
-        const cache = JSON.parse(cached);
-        const now = new Date().getTime();
-        if (now - cache.timestamp > 24 * 60 * 60 * 1000) {
-          localStorage.removeItem(cacheKey);
-          return null;
-        }
-        // Match cache entries to current content.
-        return content.map(item => {
-          const cachedItem = cache.data.find(c => c.original === item.text);
-          if (!cachedItem) return null;
-          return {
-            id: item.id,
-            original: item.text,
-            translated: cachedItem.translated
-          };
-        }).filter(Boolean);
-      } catch (e) {
-        console.error('Cache parsing error:', e);
-        localStorage.removeItem(cacheKey);
-        return null;
-      }
-    },
-
-    // Saves translations into localStorage for caching.
-    _cacheTranslations: function(translations, targetLanguage) {
-      const cacheKey = `translations_${this.config.siteId}_${this.config.sourceLanguage}_${targetLanguage}`;
-      try {
-        const existing = localStorage.getItem(cacheKey);
-        const cache = existing ? JSON.parse(existing) : { data: [], timestamp: new Date().getTime() };
-        translations.forEach(translation => {
-          const existingIndex = cache.data.findIndex(c => c.original === translation.original);
-          if (existingIndex >= 0) {
-            cache.data[existingIndex] = {
-              original: translation.original,
-              translated: translation.translated
-            };
-          } else {
-            cache.data.push({
-              original: translation.original,
-              translated: translation.translated
-            });
-          }
-        });
-        cache.timestamp = new Date().getTime();
-        localStorage.setItem(cacheKey, JSON.stringify(cache));
-      } catch (e) {
-        console.error('Cache saving error:', e);
-      }
     },
 
     // Sets up a basic listener for URL (route) changes in single-page applications.
