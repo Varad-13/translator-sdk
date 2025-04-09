@@ -3,7 +3,7 @@
 
   // API configuration
   const API_URL = "http://localhost:8000/api/v1/translate";
-
+  let isTranslating = false;
   const TranslationSDK = {
     config: {
       apiUrl: API_URL,
@@ -290,7 +290,7 @@
         }))
       };
       console.log("[API] Sending payload to API:", payload);
-
+      isTranslating = true:
       fetch(this.config.apiUrl, {
         method: "POST",
         headers: {
@@ -328,7 +328,9 @@
       .catch(error => {
         console.error("[API] Translation request failed:", error);
         this._hideLoadingIndicator();
-      });
+      }).finally(() => {
+        isTranslating = false;
+        });
     },
 
     // --- Step 8: Apply translations to elements ---
@@ -381,11 +383,14 @@
     // --- Step 11: Mutation Observer to handle dynamic DOM changes ---
     _startTranslationPolling: function() {
       console.log("[Loop] Starting translation polling loop...");
+ 
       setInterval(() => {
         if (!this.config.targetLanguage || this.config.targetLanguage === this.config.sourceLanguage) {
           return;
         }
-    
+        if (isTranslating) {
+          return;
+        }
         const allElements = this.extractContent();
         const stored = localStorage.getItem(this._originalContentKey);
         const mapping = stored ? JSON.parse(stored) : {};
