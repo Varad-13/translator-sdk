@@ -290,7 +290,7 @@
         }))
       };
       console.log("[API] Sending payload to API:", payload);
-      isTranslating = true:
+      isTranslating = true;
       fetch(this.config.apiUrl, {
         method: "POST",
         headers: {
