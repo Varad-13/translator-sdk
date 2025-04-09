@@ -294,8 +294,8 @@
         this._languageSelectorButton.disabled = true;
         this._languageSelectorButton.style.opacity = 0.6;
         this._languageSelectorButton.style.cursor = 'not-allowed';
+        this._languageSelectorButton.innerHTML = `<span>🌐</span> <span>Translating...</span>`;
       }
-      this._showLoadingIndicator();
 
       fetch(this.config.apiUrl, {
         method: "POST",
@@ -333,16 +333,16 @@
       })
       .catch(error => {
         console.error("[API] Translation request failed:", error);
-        this._hideLoadingIndicator();
       })
       .finally(() => {
         isTranslating = false;
         if (this._languageSelectorButton) {
+          const name = this._languageMapping[this.config.targetLanguage] || this.config.targetLanguage;
           this._languageSelectorButton.disabled = false;
           this._languageSelectorButton.style.opacity = 1;
           this._languageSelectorButton.style.cursor = 'pointer';
+          this._languageSelectorButton.innerHTML = `<span>🌐</span> <span>${name}</span>`;
         }
-          this._hideLoadingIndicator();
       });
     },
 
@@ -366,31 +366,6 @@
         console.log(`[Apply] Updated element ${translation.id} with translation:`, translation.translated);
       });
       console.log("[Apply] Finished applying translations.");
-    },
-
-    // --- UI: Loading Indicator ---
-    _showLoadingIndicator: function() {
-      console.log("[UI] Showing loading indicator.");
-      if (document.querySelector('.translation-loading-indicator')) return;
-      const indicator = document.createElement('div');
-      indicator.className = 'translation-loading-indicator';
-      indicator.style.position = 'fixed';
-      indicator.style.top = '10px';
-      indicator.style.right = '10px';
-      indicator.style.background = 'rgba(0,0,0,0.7)';
-      indicator.style.color = 'white';
-      indicator.style.padding = '8px 15px';
-      indicator.style.borderRadius = '4px';
-      indicator.style.fontFamily = 'system-ui, sans-serif';
-      indicator.style.fontSize = '14px';
-      indicator.style.zIndex = '10000';
-      indicator.textContent = 'Translating...';
-      document.body.appendChild(indicator);
-    },
-    _hideLoadingIndicator: function() {
-      console.log("[UI] Hiding loading indicator.");
-      const indicator = document.querySelector('.translation-loading-indicator');
-      if (indicator) indicator.remove();
     },
 
     // --- Step 11: Mutation Observer to handle dynamic DOM changes ---
