@@ -244,14 +244,12 @@
         return;
       }
       this._translationRetries = 0;
-      this._showLoadingIndicator();
       
 
       // Fetch translations for these original items.
       this._sendTranslationRequest(originalItems, (translations) => {
         console.log("[Translate] Received translations:", translations);
         this._applyTranslations(translations);
-        this._hideLoadingIndicator();
       });
     },
 
@@ -297,6 +295,8 @@
         this._languageSelectorButton.style.opacity = 0.6;
         this._languageSelectorButton.style.cursor = 'not-allowed';
       }
+      this._showLoadingIndicator();
+
       fetch(this.config.apiUrl, {
         method: "POST",
         headers: {
@@ -342,6 +342,7 @@
           this._languageSelectorButton.style.opacity = 1;
           this._languageSelectorButton.style.cursor = 'pointer';
         }
+          this._hideLoadingIndicator();
       });
     },
 
