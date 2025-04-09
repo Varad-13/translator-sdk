@@ -245,24 +245,13 @@
       }
       this._translationRetries = 0;
       this._showLoadingIndicator();
-      isTranslating = true;
-      if (this._languageSelectorButton) {
-        this._languageSelectorButton.disabled = true;
-        this._languageSelectorButton.style.opacity = 0.6;
-        this._languageSelectorButton.style.cursor = 'not-allowed';
-      }
+      
 
       // Fetch translations for these original items.
       this._sendTranslationRequest(originalItems, (translations) => {
         console.log("[Translate] Received translations:", translations);
         this._applyTranslations(translations);
         this._hideLoadingIndicator();
-        isTranslating = false;
-        if (this._languageSelectorButton) {
-          this._languageSelectorButton.disabled = false;
-          this._languageSelectorButton.style.opacity = 1;
-          this._languageSelectorButton.style.cursor = 'pointer';
-        }
       });
     },
 
@@ -302,7 +291,12 @@
         }))
       };
       console.log("[API] Sending payload to API:", payload);
-
+      isTranslating = true;
+      if (this._languageSelectorButton) {
+        this._languageSelectorButton.disabled = true;
+        this._languageSelectorButton.style.opacity = 0.6;
+        this._languageSelectorButton.style.cursor = 'not-allowed';
+      }
       fetch(this.config.apiUrl, {
         method: "POST",
         headers: {
@@ -340,6 +334,14 @@
       .catch(error => {
         console.error("[API] Translation request failed:", error);
         this._hideLoadingIndicator();
+      })
+      .finally(() => {
+        isTranslating = false;
+        if (this._languageSelectorButton) {
+          this._languageSelectorButton.disabled = false;
+          this._languageSelectorButton.style.opacity = 1;
+          this._languageSelectorButton.style.cursor = 'pointer';
+        }
       });
     },
 
