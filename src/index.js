@@ -15,7 +15,7 @@
       selectors: {
         include: [
           'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
-          'li', 'td', 'th', 'button', 'a', 'label', 'span'
+          'li', 'td', 'th', 'button', 'label', 'span'
         ],
         exclude: ['.no-translate', '[data-no-translate]']
       }
